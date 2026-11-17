@@ -1,0 +1,24 @@
+# Local Cloudflare Pages Functions Secrets Template
+# Copy this file to `.dev.vars` for local `wrangler pages dev` testing.
+# NEVER commit `.dev.vars` or real secret values to GitHub.
+
+# Email Delivery (Resend)
+RESEND_API_KEY="re_replace_with_your_resend_api_key"
+CONTACT_EMAIL="educationrevolution90@gmail.com"
+SENDER_EMAIL="DIGI TECH SOLUTION <noreply@yourdomain.com>"
+
+# Razorpay Payments (Use Test Mode keys first: rzp_test_...)
+RAZORPAY_KEY_ID="rzp_test_replace_with_key_id"
+RAZORPAY_KEY_SECRET="replace_with_razorpay_key_secret"
+RAZORPAY_WEBHOOK_SECRET="replace_with_razorpay_webhook_secret"
+
+# Optional Supabase Database (if using Supabase instead of or alongside Cloudflare D1)
+SUPABASE_URL=""
+SUPABASE_SERVICE_ROLE_KEY=""
+
+# Public Agency Configuration
+WHATSAPP_NUMBER="917319785754"
+APP_BASE_URL="http://localhost:8788"
+
+# Admin Dashboard Bearer Token (Generate a long random secret)
+ADMIN_ACCESS_TOKEN="replace_with_long_random_admin_token"

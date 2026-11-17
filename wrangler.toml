@@ -1,0 +1,22 @@
+# Cloudflare Pages & D1 Configuration for DIGI TECH SOLUTION
+# Do NOT put secrets in this file. Configure secrets in Cloudflare Pages Dashboard
+# or locally inside `.dev.vars` (which is gitignored).
+
+name = "digi-tech-solution"
+compatibility_date = "2026-01-01"
+pages_build_output_dir = "dist"
+
+[vars]
+CONTACT_EMAIL = "educationrevolution90@gmail.com"
+SENDER_EMAIL = "DIGI TECH SOLUTION <noreply@yourdomain.com>"
+WHATSAPP_NUMBER = "917319785754"
+APP_BASE_URL = "https://digi-tech-solution.pages.dev"
+
+# D1 Database Binding
+# Run: npx wrangler d1 create digi_tech_solution_db
+# Then replace database_id below with the generated UUID.
+[[d1_databases]]
+binding = "DB"
+database_name = "digi_tech_solution_db"
+database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+migrations_dir = "migrations"
