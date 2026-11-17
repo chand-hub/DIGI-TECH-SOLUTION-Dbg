@@ -18,5 +18,5 @@ APP_BASE_URL = "https://digi-tech-solution.pages.dev"
 [[d1_databases]]
 binding = "DB"
 database_name = "digi_tech_solution_db"
-database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+database_id = "2a959bcd-46e7-4df3-a0e1-d95357fb753a"
 migrations_dir = "migrations"
