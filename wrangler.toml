@@ -8,7 +8,7 @@ pages_build_output_dir = "dist"
 
 [vars]
 CONTACT_EMAIL = "educationrevolution90@gmail.com"
-SENDER_EMAIL = "DIGI TECH SOLUTION <noreply@yourdomain.com>"
+SENDER_EMAIL ="DIGI TECH SOLUTION <onboarding@resend.dev>"
 WHATSAPP_NUMBER = "917319785754"
 APP_BASE_URL = "https://digi-tech-solution.pages.dev"
 
