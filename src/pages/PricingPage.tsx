@@ -23,7 +23,8 @@ export function PricingPage({
   onNavigate,
 }: PricingPageProps) {
   const [referenceNumber, setReferenceNumber] = useState('');
-  const [selectedPkgId, setSelectedPkgId] = useState<'starter' | 'business' | 'premium'>('starter');
+  const [selectedPkgId, setSelectedPkgId] = useState<'starter' | 'business' | 'premium' | 'custom'>('starter');
+  const [dropdownCustomAmount, setDropdownCustomAmount] = useState('');
   const [paying, setPaying] = useState(false);
   const [payNotice, setPayNotice] = useState<string | null>(null);
   const [pendingOrderId, setPendingOrderId] = useState<string | null>(null);
@@ -62,11 +63,29 @@ export function PricingPage({
   };
 
   const handleDirectPayment = async () => {
+    if (paying) return;
     setPayNotice(null);
     const trimmedRef = referenceNumber.trim().toUpperCase();
     if (!trimmedRef) {
       setPayNotice('Please enter your Enquiry Reference Number (e.g., DTS-20261117-XXXXXX) first.');
       return;
+    }
+
+    let customAmountInr: number | undefined;
+    if (selectedPkgId === 'custom') {
+      const trimmedAmount = dropdownCustomAmount.trim();
+      const parsedAmount = Number(trimmedAmount);
+      if (
+        !trimmedAmount ||
+        !/^\d+$/.test(trimmedAmount) ||
+        !Number.isSafeInteger(parsedAmount) ||
+        parsedAmount < 100 ||
+        parsedAmount > 500000
+      ) {
+        setPayNotice('Please enter a whole number amount in ₹ between 100 and 500000.');
+        return;
+      }
+      customAmountInr = parsedAmount;
     }
 
     if (!runtimeConfig.razorpayConfigured) {
@@ -84,7 +103,10 @@ export function PricingPage({
         return;
       }
 
-      const orderRes = await createRazorpayOrder(trimmedRef, selectedPkgId);
+      const orderRes =
+        selectedPkgId === 'custom'
+          ? await createRazorpayOrder(trimmedRef, 'custom', { customAmountInr })
+          : await createRazorpayOrder(trimmedRef, selectedPkgId);
       if (!orderRes.success || !orderRes.orderId || !orderRes.keyId) {
         setPayNotice(orderRes.error || 'Failed to create payment order.');
         return;
@@ -494,17 +516,44 @@ export function PricingPage({
                     <select
                       id="pay-pkg"
                       value={selectedPkgId}
-                      onChange={(e) =>
-                        setSelectedPkgId(e.target.value as 'starter' | 'business' | 'premium')
-                      }
+                      onChange={(e) => {
+                        setSelectedPkgId(
+                          e.target.value as 'starter' | 'business' | 'premium' | 'custom'
+                        );
+                        setPayNotice(null);
+                      }}
                       className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-[#111827] focus:border-[#2563EB] focus:outline-none"
                     >
                       <option value="starter">Starter Package — ₹7,999</option>
                       <option value="business">Business Package — ₹16,999</option>
                       <option value="premium">Premium Package — ₹25,999</option>
+                      <option value="custom">Custom Amount (INR)</option>
                     </select>
                   </div>
                 </div>
+
+                {selectedPkgId === 'custom' && (
+                  <div className="mt-3">
+                    <label
+                      htmlFor="pay-custom-amount"
+                      className="block text-xs font-medium text-[#111827]"
+                    >
+                      Enter amount in ₹
+                    </label>
+                    <input
+                      id="pay-custom-amount"
+                      type="number"
+                      min={100}
+                      max={500000}
+                      step={1}
+                      inputMode="numeric"
+                      value={dropdownCustomAmount}
+                      onChange={(e) => setDropdownCustomAmount(e.target.value)}
+                      placeholder="5000"
+                      className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-[#111827] tabular-nums focus:border-[#2563EB] focus:outline-none"
+                    />
+                  </div>
+                )}
 
                 {payNotice && (
                   <div className="mt-3 space-y-2 rounded-lg border border-blue-200 bg-blue-50 p-3 text-xs text-slate-800">
