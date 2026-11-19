@@ -20,8 +20,13 @@ self.addEventListener('fetch', (event) => {
   if (request.method !== 'GET') return;
 
   const url = new URL(request.url);
-  // Never cache API calls or Razorpay external scripts
-  if (url.pathname.startsWith('/api/') || url.origin !== self.location.origin) {
+  // Never intercept API calls, external origins, byte-range requests, or MP4 video streams
+  if (
+    url.pathname.startsWith('/api/') ||
+    url.origin !== self.location.origin ||
+    request.headers.has('range') ||
+    url.pathname.endsWith('.mp4')
+  ) {
     return;
   }
 

@@ -49,6 +49,6 @@ export const onRequestPost: PagesFunction = async ({ request, env }) => {
   return jsonResponse({
     success: true,
     ...result,
-    recipient: env.BUSINESS_EMAIL || 'educationrevolution90@gmail.com',
+    recipient: env.CONTACT_EMAIL || env.BUSINESS_EMAIL || 'educationrevolution90@gmail.com',
   });
 };

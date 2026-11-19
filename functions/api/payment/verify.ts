@@ -1,4 +1,4 @@
-import { constantTimeEqual, hmacSha256Hex, jsonResponse, sanitizeText } from '../../lib/security';
+import { checkRateLimit, constantTimeEqual, hmacSha256Hex, jsonResponse, sanitizeText } from '../../lib/security';
 import { PagesFunction, PaymentState, VerificationState } from '../../lib/types';
 
 function mapRazorpayStatus(rawStatus: string | undefined): PaymentState {
@@ -21,6 +21,18 @@ function mapRazorpayStatus(rawStatus: string | undefined): PaymentState {
 export const onRequestPost: PagesFunction = async ({ request, env }) => {
   if (!env.DB) {
     return jsonResponse({ success: false, error: 'Database binding (DB) is not configured.' }, 503);
+  }
+
+  const rateLimit = await checkRateLimit(env.DB, request, 'payment_verify', 20, 600);
+  if (!rateLimit.allowed) {
+    return jsonResponse(
+      {
+        success: false,
+        error: 'Too many verification requests. Please wait a moment and try again.',
+        retryAfterSeconds: rateLimit.retryAfterSeconds,
+      },
+      429
+    );
   }
 
   const keyId = env.RAZORPAY_KEY_ID?.trim() || '';
@@ -56,7 +68,7 @@ export const onRequestPost: PagesFunction = async ({ request, env }) => {
   }
 
   const paymentRecord = await env.DB.prepare(
-    `SELECT p.id, p.enquiry_id, p.enquiry_reference, p.amount, p.status
+    `SELECT p.id, p.enquiry_id, p.enquiry_reference, p.razorpay_payment_id, p.amount, p.status, p.verification_status
      FROM payments p
      WHERE p.razorpay_order_id = ? LIMIT 1`
   )
@@ -65,8 +77,10 @@ export const onRequestPost: PagesFunction = async ({ request, env }) => {
       id: number;
       enquiry_id: number | null;
       enquiry_reference: string;
+      razorpay_payment_id: string | null;
       amount: number;
       status: string;
+      verification_status: string;
     }>();
 
   if (!paymentRecord) {
@@ -81,23 +95,44 @@ export const onRequestPost: PagesFunction = async ({ request, env }) => {
   const signatureValid = constantTimeEqual(expectedSignature, signature);
 
   if (!signatureValid) {
-    await env.DB.prepare(
-      `UPDATE payments
-       SET status = 'FAILED', verification_status = 'FAILED', updated_at = datetime('now')
-       WHERE id = ?`
-    )
-      .bind(paymentRecord.id)
-      .run();
+    if (paymentRecord.status !== 'CAPTURED') {
+      await env.DB.prepare(
+        `UPDATE payments
+         SET status = 'FAILED', verification_status = 'FAILED', updated_at = datetime('now')
+         WHERE id = ?`
+      )
+        .bind(paymentRecord.id)
+        .run();
+    }
 
     return jsonResponse(
       {
         success: false,
         verified: false,
-        status: 'FAILED',
+        status: paymentRecord.status === 'CAPTURED' ? 'CAPTURED' : 'FAILED',
         error: 'Payment signature verification failed.',
       },
       400
     );
+  }
+
+  // Idempotent return if this exact captured payment was already verified (via callback or webhook)
+  if (
+    paymentRecord.status === 'CAPTURED' &&
+    paymentRecord.verification_status === 'VERIFIED' &&
+    paymentRecord.razorpay_payment_id === paymentId
+  ) {
+    return jsonResponse({
+      success: true,
+      verified: true,
+      duplicate: true,
+      status: 'CAPTURED',
+      verificationStatus: 'VERIFIED',
+      orderId,
+      paymentId,
+      referenceNumber: paymentRecord.enquiry_reference,
+      message: 'Payment already captured and verified.',
+    });
   }
 
   // Step 8: Independently verify actual payment & order status via Razorpay REST API

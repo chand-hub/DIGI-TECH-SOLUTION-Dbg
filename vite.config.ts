@@ -85,6 +85,16 @@ function createDevD1Database() {
           const p = payments.find((item) => item.razorpay_order_id === orderId);
           return (p || null) as unknown as T;
         }
+        if (q.includes('FROM payments') && q.includes("status = 'CAPTURED'")) {
+          const ref = String(bound[0]);
+          const p = payments.find(
+            (item) =>
+              item.enquiry_reference === ref &&
+              item.status === 'CAPTURED' &&
+              item.verification_status === 'VERIFIED'
+          );
+          return (p || null) as unknown as T;
+        }
         if (q.includes('FROM payments WHERE enquiry_reference = ?')) {
           const ref = String(bound[0]);
           const p = [...payments].reverse().find((item) => item.enquiry_reference === ref);
@@ -231,6 +241,8 @@ function cloudflareFunctionsDevBridge(): Plugin {
     '/api/enquiries': '/functions/api/enquiries.ts',
     '/api/contact': '/functions/api/contact.ts',
     '/api/email/test': '/functions/api/email/test.ts',
+    '/api/create-order': '/functions/api/create-order.ts',
+    '/api/verify-payment': '/functions/api/verify-payment.ts',
     '/api/payment/create-order': '/functions/api/payment/create-order.ts',
     '/api/payment/verify': '/functions/api/payment/verify.ts',
     '/api/payment/webhook': '/functions/api/payment/webhook.ts',
@@ -263,17 +275,11 @@ function cloudflareFunctionsDevBridge(): Plugin {
             body: req.method === 'GET' || req.method === 'HEAD' ? undefined : rawBody,
           });
 
+          const mwMod = await server.ssrLoadModule('/functions/_middleware.ts');
           const mod = await server.ssrLoadModule(modulePath);
           const method = (req.method || 'GET').toUpperCase();
           const handler =
             mod[`onRequest${method[0]}${method.slice(1).toLowerCase()}`] || mod.onRequest;
-
-          if (typeof handler !== 'function') {
-            res.statusCode = 405;
-            res.setHeader('Content-Type', 'application/json');
-            res.end(JSON.stringify({ success: false, error: `Method ${method} not allowed.` }));
-            return;
-          }
 
           const env = {
             ...process.env,
@@ -282,13 +288,32 @@ function cloudflareFunctionsDevBridge(): Plugin {
             WHATSAPP_NUMBER: process.env.WHATSAPP_NUMBER || '917319785754',
           };
 
-          const webRes: Response = await handler({
-            request: webReq,
-            env,
-            params: {},
-            next: async () => new Response('Not found', { status: 404 }),
-            waitUntil: () => {},
-          });
+          const runRoute = async () => {
+            if (typeof handler !== 'function') {
+              return new Response(
+                JSON.stringify({ success: false, error: `Method ${method} not allowed.` }),
+                { status: 405, headers: { 'Content-Type': 'application/json' } }
+              );
+            }
+            return handler({
+              request: webReq,
+              env,
+              params: {},
+              next: async () => new Response('Not found', { status: 404 }),
+              waitUntil: () => {},
+            });
+          };
+
+          const webRes: Response =
+            typeof mwMod.onRequest === 'function'
+              ? await mwMod.onRequest({
+                  request: webReq,
+                  env,
+                  params: {},
+                  next: runRoute,
+                  waitUntil: () => {},
+                })
+              : await runRoute();
 
           res.statusCode = webRes.status;
           webRes.headers.forEach((value, key) => {

@@ -268,7 +268,10 @@ export function generateReferenceNumber(): string {
 
 export function getCorsHeaders(request: Request, env: Env): Record<string, string> {
   const origin = request.headers.get('Origin') || '';
-  const allowedOrigin = env.APP_BASE_URL?.replace(/\/$/, '') || '';
+  const configuredOrigins = (env.APP_BASE_URL || '')
+    .split(',')
+    .map((o) => o.trim().replace(/\/$/, ''))
+    .filter(Boolean);
 
   const isLocal =
     origin.startsWith('http://localhost:') ||
@@ -286,7 +289,7 @@ export function getCorsHeaders(request: Request, env: Env): Record<string, strin
   const allow =
     isSameOrigin ||
     isLocal ||
-    (allowedOrigin.length > 0 && origin === allowedOrigin);
+    configuredOrigins.includes(origin);
 
   if (!origin || !allow) {
     return {};

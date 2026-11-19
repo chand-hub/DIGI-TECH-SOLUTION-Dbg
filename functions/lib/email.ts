@@ -15,7 +15,13 @@ function getEmailConfig(env: Env): { apiKey: string; from: string; contactEmail:
   const contactEmail = stripHeaderNewlines(
     (env.CONTACT_EMAIL || env.BUSINESS_EMAIL || 'educationrevolution90@gmail.com').trim()
   );
-  if (!apiKey || !from || apiKey.includes('replace_with')) {
+  if (
+    !apiKey ||
+    !from ||
+    apiKey.includes('replace_with') ||
+    from.includes('replace_with') ||
+    from.includes('yourdomain.com')
+  ) {
     return null;
   }
   return { apiKey, from, contactEmail };

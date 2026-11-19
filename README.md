@@ -22,10 +22,10 @@ A full-stack digital agency platform built with **React, TypeScript, Vite, Tailw
 | :--- | :--- | :--- |
 | `/api/config` | `GET` | Public non-secret runtime config (`whatsappNumber`, `razorpayKeyId` when configured, feature flags) |
 | `/api/enquiries` | `POST` | Validates multi-service enquiries (no minimum char limits on optional notes), checks duplicates, stores in D1, sends Resend emails |
-| `/api/contact` | `POST` | Quick contact form backed by D1 and Resend |
+| `/api/contact` | `POST` | Validates & stores contact requests in D1 (`digi_tech_solution_db`) and dispatches Resend emails |
 | `/api/email/test` | `POST` | Protected Resend diagnostic endpoint (`Bearer ADMIN_ACCESS_TOKEN`) |
-| `/api/payment/create-order` | `POST` | Creates Razorpay order using server-authoritative package prices (`CREATED`) |
-| `/api/payment/verify` | `POST` | Verifies Razorpay HMAC-SHA256 signature and confirms `CAPTURED` status via Razorpay REST API |
+| `/api/create-order` | `POST` | Creates Razorpay order server-side using `RAZORPAY_KEY_ID`/`RAZORPAY_KEY_SECRET` (alias: `/api/payment/create-order`) |
+| `/api/verify-payment` | `POST` | Verifies Razorpay HMAC-SHA256 signature & Razorpay `CAPTURED` status, updates D1 (alias: `/api/payment/verify`) |
 | `/api/payment/webhook` | `POST` | Verifies raw-body `x-razorpay-signature` and handles idempotent webhook events (`captured`, `authorized`, `failed`, `refunded`) |
 | `/api/payment/status` | `GET` | Queries and reconciles order status by `order_id` for network disconnect recovery |
 | `/api/admin/enquiries` | `GET` / `PATCH` | Protected lead management console (`Bearer ADMIN_ACCESS_TOKEN`) |

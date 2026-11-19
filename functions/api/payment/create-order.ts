@@ -1,4 +1,11 @@
-import { checkRateLimit, jsonResponse, sanitizeText } from '../../lib/security';
+import {
+  checkRateLimit,
+  generateReferenceNumber,
+  isValidEmail,
+  jsonResponse,
+  normalizeIndianPhone,
+  sanitizeText,
+} from '../../lib/security';
 import { PACKAGE_CATALOG, PagesFunction } from '../../lib/types';
 
 export const onRequestPost: PagesFunction = async ({ request, env }) => {
@@ -32,6 +39,7 @@ export const onRequestPost: PagesFunction = async ({ request, env }) => {
       {
         success: false,
         error: 'Too many payment attempts. Please wait a few minutes.',
+        retryAfterSeconds: rateLimit.retryAfterSeconds,
       },
       429
     );
@@ -44,44 +52,117 @@ export const onRequestPost: PagesFunction = async ({ request, env }) => {
     return jsonResponse({ success: false, error: 'Invalid JSON request body.' }, 400);
   }
 
-  const referenceNumber = sanitizeText(body.referenceNumber, 40).toUpperCase();
+  let referenceNumber = sanitizeText(body.referenceNumber, 40).toUpperCase();
   const packageId = sanitizeText(body.packageId, 24).toLowerCase();
   const customAmountInr = Number(body.customAmountInr);
   const serviceNameInput = sanitizeText(body.serviceName, 120);
 
-  if (!referenceNumber) {
-    return jsonResponse(
-      { success: false, error: 'A valid enquiry reference number is required before initiating payment.' },
-      400
-    );
+  let enquiry: {
+    id: number;
+    reference_number: string;
+    full_name: string;
+    email: string;
+    phone: string;
+    service: string;
+  } | null = null;
+
+  if (referenceNumber) {
+    enquiry = await env.DB.prepare(
+      `SELECT id, reference_number, full_name, email, phone, service
+       FROM enquiries WHERE reference_number = ? LIMIT 1`
+    )
+      .bind(referenceNumber)
+      .first();
+
+    if (!enquiry) {
+      return jsonResponse(
+        {
+          success: false,
+          error: 'Enquiry reference number was not found. Please submit your project enquiry first.',
+        },
+        404
+      );
+    }
+  } else {
+    const customerName = sanitizeText(body.customerName ?? body.fullName ?? body.name, 120);
+    const customerEmail = sanitizeText(body.customerEmail ?? body.email, 160).toLowerCase();
+    const rawPhone = sanitizeText(body.customerPhone ?? body.phone, 24);
+    const normalizedPhone = normalizeIndianPhone(rawPhone);
+
+    if (customerName.length < 2 || !isValidEmail(customerEmail) || !normalizedPhone) {
+      return jsonResponse(
+        {
+          success: false,
+          error:
+            'Provide an existing enquiry referenceNumber, or valid customerName, customerEmail, and 10-digit Indian customerPhone.',
+        },
+        400
+      );
+    }
+
+    referenceNumber = generateReferenceNumber();
+    const fallbackService = serviceNameInput || PACKAGE_CATALOG[packageId]?.name || 'Custom Consultation';
+
+    const insertEnquiry = await env.DB.prepare(
+      `INSERT INTO enquiries (
+        reference_number, full_name, business_name, email, phone,
+        category, service, services_json, package, budget, description,
+        additional_requirements, contact_preference, status
+      ) VALUES (?, ?, '', ?, ?, 'Direct Checkout', ?, ?, ?, '', 'Direct package payment order initiated', '', 'WhatsApp', 'New')`
+    )
+      .bind(
+        referenceNumber,
+        customerName,
+        customerEmail,
+        normalizedPhone,
+        fallbackService,
+        JSON.stringify([fallbackService]),
+        PACKAGE_CATALOG[packageId]?.name || 'Custom Quote'
+      )
+      .run();
+
+    if (!insertEnquiry.success) {
+      return jsonResponse(
+        { success: false, error: 'Unable to register checkout reference in database.' },
+        500
+      );
+    }
+
+    enquiry = {
+      id: Number(insertEnquiry.meta.last_row_id ?? 0),
+      reference_number: referenceNumber,
+      full_name: customerName,
+      email: customerEmail,
+      phone: normalizedPhone,
+      service: fallbackService,
+    };
   }
 
-  const enquiry = await env.DB.prepare(
-    `SELECT id, reference_number, full_name, email, phone, service
-     FROM enquiries WHERE reference_number = ? LIMIT 1`
+  // Prevent duplicate payment processing if a verified CAPTURED payment already exists for this enquiry
+  const existingCaptured = await env.DB.prepare(
+    `SELECT razorpay_order_id, razorpay_payment_id
+     FROM payments
+     WHERE enquiry_reference = ? AND status = 'CAPTURED' AND verification_status = 'VERIFIED'
+     LIMIT 1`
   )
-    .bind(referenceNumber)
-    .first<{
-      id: number;
-      reference_number: string;
-      full_name: string;
-      email: string;
-      phone: string;
-      service: string;
-    }>();
+    .bind(enquiry.reference_number)
+    .first<{ razorpay_order_id: string; razorpay_payment_id: string | null }>();
 
-  if (!enquiry) {
+  if (existingCaptured) {
     return jsonResponse(
       {
         success: false,
-        error: 'Enquiry reference number was not found. Please submit your project enquiry first.',
+        duplicate: true,
+        orderId: existingCaptured.razorpay_order_id,
+        paymentId: existingCaptured.razorpay_payment_id,
+        error: `A verified payment (${existingCaptured.razorpay_order_id}) has already been captured for enquiry ${enquiry.reference_number}.`,
       },
-      404
+      409
     );
   }
 
   // Server-authoritative amount calculation:
-  // Standard packages resolve from PACKAGE_CATALOG; custom quotation payments require a positive bounded INR integer (₹100 to ₹5,00,000)
+  // Standard packages resolve strictly from PACKAGE_CATALOG; custom quotations require integer INR ₹100–₹5,00,000.
   let amountPaise = 0;
   let amountInr = 0;
   let resolvedLabel = serviceNameInput || enquiry.service;

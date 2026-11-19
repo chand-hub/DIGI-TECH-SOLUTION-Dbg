@@ -15,7 +15,9 @@ export const onRequestGet: PagesFunction = async ({ env }) => {
   const resendConfigured =
     resendKey.length > 0 &&
     senderEmail.length > 0 &&
-    !resendKey.includes('replace_with');
+    !resendKey.includes('replace_with') &&
+    !senderEmail.includes('replace_with') &&
+    !senderEmail.includes('yourdomain.com');
 
   const whatsappRaw = (env.WHATSAPP_NUMBER || '917319785754').replace(/[^\d]/g, '');
   const whatsappConfigured = whatsappRaw.length >= 10 && !/^910+$/.test(whatsappRaw);

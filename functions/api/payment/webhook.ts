@@ -81,7 +81,11 @@ export const onRequestPost: PagesFunction = async ({ request, env }) => {
     )
       .bind(paymentEntity.id, paymentEntity.order_id)
       .run();
-  } else if (eventType === 'payment.captured' && paymentEntity?.order_id && paymentEntity?.id) {
+  } else if (
+    (eventType === 'payment.captured' || eventType === 'order.paid') &&
+    paymentEntity?.order_id &&
+    paymentEntity?.id
+  ) {
     await env.DB.prepare(
       `UPDATE payments
        SET razorpay_payment_id = ?, status = 'CAPTURED', verification_status = 'VERIFIED',

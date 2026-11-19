@@ -91,7 +91,7 @@ export async function createRazorpayOrder(
   packageId: 'starter' | 'business' | 'premium' | 'custom',
   options?: { customAmountInr?: number; serviceName?: string }
 ): Promise<CreateOrderResponse> {
-  const res = await fetch('/api/payment/create-order', {
+  const res = await fetch('/api/create-order', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -106,6 +106,34 @@ export async function createRazorpayOrder(
   });
   const data = (await res.json().catch(() => ({}))) as CreateOrderResponse;
   if (!res.ok) {
+    return {
+      success: false,
+      configured: data.configured,
+      error: data.error || `Unable to create payment order (${res.status}).`,
+    };
+  }
+  return data;
+}
+
+export async function createCustomRazorpayOrder(
+  referenceNumber: string,
+  customAmountInr: number
+): Promise<CreateOrderResponse> {
+  const res = await fetch('/api/payment/create-order', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    },
+    body: JSON.stringify({
+      referenceNumber,
+      packageId: 'custom',
+      customAmountInr,
+      serviceName: 'Booking Confirmation',
+    }),
+  });
+  const data = (await res.json().catch(() => ({}))) as CreateOrderResponse;
+  if (!res.ok || data.success !== true) {
     return {
       success: false,
       configured: data.configured,
@@ -132,7 +160,7 @@ export async function verifyRazorpayPayment(payload: {
   razorpay_payment_id: string;
   razorpay_signature: string;
 }): Promise<VerifyPaymentResponse> {
-  const res = await fetch('/api/payment/verify', {
+  const res = await fetch('/api/verify-payment', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -210,4 +238,82 @@ export function loadRazorpayCheckoutScript(): Promise<boolean> {
     script.onerror = () => resolve(false);
     document.body.appendChild(script);
   });
+}
+
+export function buildRazorpayCheckoutOptions(params: {
+  order: CreateOrderResponse;
+  onVerifiedSuccess: (result: VerifyPaymentResponse) => void;
+  onPendingOrAuthorized: (status: PaymentState, message: string) => void;
+  onFailure: (reason: string) => void;
+  onDismiss: () => void;
+}): Record<string, unknown> {
+  const { order, onVerifiedSuccess, onPendingOrAuthorized, onFailure, onDismiss } = params;
+
+  return {
+    key: order.keyId,
+    amount: order.amount,
+    currency: order.currency || 'INR',
+    name: 'DIGI TECH SOLUTION',
+    description: `${order.packageName} — Ref ${order.referenceNumber}`,
+    order_id: order.orderId,
+    prefill: order.prefill,
+    notes: {
+      enquiry_reference: order.referenceNumber || '',
+      package_name: order.packageName || '',
+    },
+    // Enable supported UPI flows (Intent on Android mobile browsers, QR on desktop browsers)
+    // without deprecated UPI Collect / manual VPA entry, while keeping default blocks active.
+    config: {
+      display: {
+        blocks: {
+          upi_preferred: {
+            name: 'Pay using UPI (QR / Apps)',
+            instruments: [
+              {
+                method: 'upi',
+                flows: ['intent', 'qr'],
+              },
+            ],
+          },
+        },
+        sequence: ['block.upi_preferred'],
+        preferences: {
+          show_default_blocks: true,
+        },
+      },
+    },
+    retry: {
+      enabled: true,
+      max_count: 3,
+    },
+    theme: { color: '#2563EB' },
+    modal: {
+      ondismiss: onDismiss,
+    },
+    handler: async (rzpResponse: {
+      razorpay_order_id: string;
+      razorpay_payment_id: string;
+      razorpay_signature: string;
+    }) => {
+      try {
+        const verified = await verifyRazorpayPayment(rzpResponse);
+        if (verified.status === 'CAPTURED' && verified.verified) {
+          onVerifiedSuccess(verified);
+        } else if (verified.status === 'PENDING' || verified.status === 'AUTHORIZED') {
+          onPendingOrAuthorized(
+            verified.status,
+            verified.message ||
+              'Payment status is being verified. Please do not make another payment until the transaction status is checked.'
+          );
+        } else {
+          onFailure(verified.error || 'Payment could not be verified as captured.');
+        }
+      } catch {
+        onPendingOrAuthorized(
+          'PENDING',
+          'Payment status is being verified. Please do not make another payment until the transaction status is checked.'
+        );
+      }
+    },
+  };
 }

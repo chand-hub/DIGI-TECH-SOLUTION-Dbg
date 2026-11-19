@@ -1,12 +1,13 @@
 import { AlertCircle, Check, CreditCard, Loader2, MessageCircle, RefreshCw } from 'lucide-react';
-import { useState } from 'react';
+import { FormEvent, useState } from 'react';
 import { buildWhatsAppUrl } from '../config/agency';
 import { PRICING_DISCLOSURES, PRICING_PACKAGES } from '../data/pricing';
 import {
+  buildRazorpayCheckoutOptions,
+  createCustomRazorpayOrder,
   createRazorpayOrder,
   fetchPaymentStatus,
   loadRazorpayCheckoutScript,
-  verifyRazorpayPayment,
 } from '../services/api';
 import { RoutePath, RuntimeConfig } from '../types/agency';
 
@@ -27,6 +28,14 @@ export function PricingPage({
   const [payNotice, setPayNotice] = useState<string | null>(null);
   const [pendingOrderId, setPendingOrderId] = useState<string | null>(null);
   const [checkingStatus, setCheckingStatus] = useState(false);
+
+  const [customReferenceNumber, setCustomReferenceNumber] = useState('');
+  const [customAmountInput, setCustomAmountInput] = useState('');
+  const [customPaying, setCustomPaying] = useState(false);
+  const [customPayError, setCustomPayError] = useState<string | null>(null);
+  const [customPayNotice, setCustomPayNotice] = useState<string | null>(null);
+  const [customPendingOrderId, setCustomPendingOrderId] = useState<string | null>(null);
+  const [customCheckingStatus, setCustomCheckingStatus] = useState(false);
 
   const handleCheckStatus = async () => {
     if (!pendingOrderId) return;
@@ -92,51 +101,31 @@ export function PricingPage({
         }
       ).Razorpay;
 
-      const rzp = new RazorpayCtor({
-        key: orderRes.keyId,
-        amount: orderRes.amount,
-        currency: orderRes.currency || 'INR',
-        name: 'DIGI TECH SOLUTION',
-        description: `${orderRes.packageName} — Ref ${orderRes.referenceNumber}`,
-        order_id: orderRes.orderId,
-        prefill: orderRes.prefill,
-        theme: { color: '#2563EB' },
-        modal: {
-          ondismiss: () => {
+      const rzp = new RazorpayCtor(
+        buildRazorpayCheckoutOptions({
+          order: orderRes,
+          onVerifiedSuccess: (verified) => {
+            onNavigate(
+              '/payment-success',
+              `?ref=${encodeURIComponent(verified.referenceNumber || trimmedRef)}&order_id=${encodeURIComponent(verified.orderId || '')}`
+            );
+          },
+          onPendingOrAuthorized: (_status, message) => {
+            setPayNotice(message);
+          },
+          onFailure: (reason) => {
+            onNavigate(
+              '/payment-failure',
+              `?ref=${encodeURIComponent(trimmedRef)}&order_id=${encodeURIComponent(orderRes.orderId || '')}&reason=${encodeURIComponent(reason)}`
+            );
+          },
+          onDismiss: () => {
             setPayNotice(
               'Payment window was closed before completion. Check payment status before retrying.'
             );
           },
-        },
-        handler: async (rzpRes: {
-          razorpay_order_id: string;
-          razorpay_payment_id: string;
-          razorpay_signature: string;
-        }) => {
-          try {
-            const verified = await verifyRazorpayPayment(rzpRes);
-            if (verified.status === 'CAPTURED' && verified.verified) {
-              onNavigate(
-                '/payment-success',
-                `?ref=${encodeURIComponent(verified.referenceNumber || trimmedRef)}&order_id=${encodeURIComponent(verified.orderId || '')}`
-              );
-            } else if (verified.status === 'PENDING' || verified.status === 'AUTHORIZED') {
-              setPayNotice(
-                'Payment status is being verified. Please do not make another payment until the transaction status is checked.'
-              );
-            } else {
-              onNavigate(
-                '/payment-failure',
-                `?ref=${encodeURIComponent(trimmedRef)}&order_id=${encodeURIComponent(orderRes.orderId || '')}&reason=${encodeURIComponent(verified.error || 'Payment could not be verified as captured.')}`
-              );
-            }
-          } catch {
-            setPayNotice(
-              'Payment status is being verified. Please do not make another payment until the transaction status is checked.'
-            );
-          }
-        },
-      });
+        })
+      );
 
       rzp.on('payment.failed', (failRes) => {
         onNavigate(
@@ -150,6 +139,131 @@ export function PricingPage({
       setPayNotice('Network interruption while initiating Razorpay Checkout.');
     } finally {
       setPaying(false);
+    }
+  };
+
+  const handleCheckCustomStatus = async () => {
+    if (!customPendingOrderId) return;
+    setCustomCheckingStatus(true);
+    setCustomPayError(null);
+    try {
+      const res = await fetchPaymentStatus({ orderId: customPendingOrderId });
+      if (!res.success) {
+        setCustomPayError(res.error || 'Could not retrieve payment status right now.');
+        return;
+      }
+      if (res.status === 'CAPTURED' && res.verificationStatus === 'VERIFIED') {
+        onNavigate(
+          '/payment-success',
+          `?ref=${encodeURIComponent(res.referenceNumber || customReferenceNumber.trim())}&order_id=${encodeURIComponent(res.orderId || '')}`
+        );
+      } else {
+        setCustomPayNotice(
+          `Backend Status: ${res.status} (${res.verificationStatus}). Please do not make another payment until this transaction settles.`
+        );
+      }
+    } catch {
+      setCustomPayError('Network interruption while checking payment status.');
+    } finally {
+      setCustomCheckingStatus(false);
+    }
+  };
+
+  const handleCustomPayment = async (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (customPaying) return;
+
+    setCustomPayError(null);
+    setCustomPayNotice(null);
+
+    const trimmedRef = customReferenceNumber.trim();
+    if (!trimmedRef) {
+      setCustomPayError('Please enter your enquiry reference number.');
+      return;
+    }
+
+    const trimmedAmount = customAmountInput.trim();
+    const isWholeDigits = /^\d+$/.test(trimmedAmount);
+    const parsedAmount = Number(trimmedAmount);
+    if (
+      !trimmedAmount ||
+      !isWholeDigits ||
+      !Number.isSafeInteger(parsedAmount) ||
+      parsedAmount < 100 ||
+      parsedAmount > 500000
+    ) {
+      setCustomPayError('Amount must be a whole number between ₹100 and ₹5,00,000.');
+      return;
+    }
+
+    setCustomPaying(true);
+    try {
+      const orderRes = await createCustomRazorpayOrder(trimmedRef, parsedAmount);
+      if (orderRes.success !== true || !orderRes.orderId || !orderRes.keyId) {
+        setCustomPayError(orderRes.error || 'Failed to create payment order.');
+        return;
+      }
+
+      const loaded = await loadRazorpayCheckoutScript();
+      if (!loaded) {
+        setCustomPayError('Unable to load Razorpay Checkout library. Check your network connection.');
+        return;
+      }
+
+      const RazorpayCtor = (
+        window as unknown as {
+          Razorpay?: new (opts: Record<string, unknown>) => {
+            open: () => void;
+            on: (event: string, cb: (res: { error?: { description?: string } }) => void) => void;
+          };
+        }
+      ).Razorpay;
+
+      if (!RazorpayCtor) {
+        setCustomPayError('Razorpay Checkout is unavailable in this browser session.');
+        return;
+      }
+
+      setCustomPendingOrderId(orderRes.orderId);
+
+      const rzp = new RazorpayCtor(
+        buildRazorpayCheckoutOptions({
+          order: orderRes,
+          onVerifiedSuccess: (verified) => {
+            onNavigate(
+              '/payment-success',
+              `?ref=${encodeURIComponent(verified.referenceNumber || trimmedRef)}&order_id=${encodeURIComponent(verified.orderId || '')}`
+            );
+          },
+          onPendingOrAuthorized: (_status, message) => {
+            setCustomPayNotice(message);
+          },
+          onFailure: (reason) => {
+            onNavigate(
+              '/payment-failure',
+              `?ref=${encodeURIComponent(trimmedRef)}&order_id=${encodeURIComponent(orderRes.orderId || '')}&reason=${encodeURIComponent(reason)}`
+            );
+          },
+          onDismiss: () => {
+            setCustomPayNotice(
+              'Payment window was closed before completion. Check payment status before retrying.'
+            );
+          },
+        })
+      );
+
+      rzp.on('payment.failed', (failRes) => {
+        onNavigate(
+          '/payment-failure',
+          `?ref=${encodeURIComponent(trimmedRef)}&order_id=${encodeURIComponent(orderRes.orderId || '')}&reason=${encodeURIComponent(failRes?.error?.description || 'Payment failed')}`
+        );
+      });
+
+      rzp.open();
+    } catch {
+      setCustomPayError('Network error while creating payment order. Please try again.');
+    } finally {
+      setCustomPaying(false);
     }
   };
 
@@ -239,6 +353,103 @@ export function PricingPage({
                 </div>
               </div>
             ))}
+          </div>
+
+          {/* Pay Custom Amount Section */}
+          <div className="mt-12 rounded-xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8">
+            <div className="grid grid-cols-1 gap-8 lg:grid-cols-12">
+              <div className="lg:col-span-6">
+                <h2 className="font-display text-xl font-bold text-[#0B1020]">
+                  Pay Custom Amount
+                </h2>
+                <p className="mt-2 text-sm leading-relaxed text-[#64748B]">
+                  Pay an agreed custom quotation or booking confirmation amount between ₹100 and ₹5,00,000 using your Enquiry Reference Number via verified Razorpay Checkout.
+                </p>
+              </div>
+
+              <form onSubmit={handleCustomPayment} noValidate className="lg:col-span-6">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div>
+                    <label htmlFor="custom-pay-ref" className="block text-xs font-medium text-[#111827]">
+                      Enquiry reference number
+                    </label>
+                    <input
+                      id="custom-pay-ref"
+                      type="text"
+                      value={customReferenceNumber}
+                      onChange={(e) => setCustomReferenceNumber(e.target.value)}
+                      placeholder="DTS-20261117-A1B2C3"
+                      disabled={customPaying}
+                      className="mt-1 w-full rounded-lg border border-slate-300 px-3.5 py-2.5 font-mono text-sm text-[#111827] focus:border-[#2563EB] focus:outline-none disabled:bg-slate-50"
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="custom-pay-amount" className="block text-xs font-medium text-[#111827]">
+                      Amount in ₹
+                    </label>
+                    <input
+                      id="custom-pay-amount"
+                      type="number"
+                      min={100}
+                      max={500000}
+                      step={1}
+                      inputMode="numeric"
+                      value={customAmountInput}
+                      onChange={(e) => setCustomAmountInput(e.target.value)}
+                      placeholder="5000"
+                      disabled={customPaying}
+                      className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-[#111827] tabular-nums focus:border-[#2563EB] focus:outline-none disabled:bg-slate-50"
+                    />
+                  </div>
+                </div>
+
+                {customPayError && (
+                  <p role="alert" className="mt-3 text-sm font-medium text-red-600">
+                    {customPayError}
+                  </p>
+                )}
+
+                {customPayNotice && (
+                  <div className="mt-3 space-y-2 rounded-lg border border-blue-200 bg-blue-50 p-3 text-xs text-slate-800">
+                    <p>{customPayNotice}</p>
+                    {customPendingOrderId && (
+                      <button
+                        type="button"
+                        onClick={handleCheckCustomStatus}
+                        disabled={customCheckingStatus}
+                        className="inline-flex items-center gap-1.5 rounded-md bg-[#0B1020] px-3 py-1.5 text-xs font-semibold text-white"
+                      >
+                        <RefreshCw
+                          className={`h-3.5 w-3.5 ${customCheckingStatus ? 'animate-spin' : ''}`}
+                          aria-hidden="true"
+                        />
+                        <span>Check Payment Status</span>
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                <div className="mt-4 flex flex-wrap items-center gap-3">
+                  <button
+                    type="submit"
+                    disabled={customPaying}
+                    className="inline-flex min-h-[42px] items-center justify-center gap-2 rounded-lg bg-[#2563EB] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[#1D4ED8] disabled:opacity-60"
+                  >
+                    {customPaying ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                        <span>Processing...</span>
+                      </>
+                    ) : (
+                      <>
+                        <CreditCard className="h-4 w-4" aria-hidden="true" />
+                        <span>Pay now</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </form>
+            </div>
           </div>
 
           {/* Pay Approved Enquiry Section */}

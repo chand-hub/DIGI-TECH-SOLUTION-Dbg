@@ -12,11 +12,11 @@ import { FormEvent, useEffect, useState } from 'react';
 import { buildWhatsAppUrl, CORE_ENQUIRY_SERVICES } from '../config/agency';
 import { PRICING_PACKAGES } from '../data/pricing';
 import {
+  buildRazorpayCheckoutOptions,
   createRazorpayOrder,
   fetchPaymentStatus,
   loadRazorpayCheckoutScript,
   submitEnquiry,
-  verifyRazorpayPayment,
 } from '../services/api';
 import { EnquiryResponse, Language, PaymentState, RoutePath, RuntimeConfig } from '../types/agency';
 
@@ -232,55 +232,33 @@ export function EnquiryForm({
         }
       ).Razorpay;
 
-      const rzp = new RazorpayCtor({
-        key: orderRes.keyId,
-        amount: orderRes.amount,
-        currency: orderRes.currency || 'INR',
-        name: 'DIGI TECH SOLUTION',
-        description: `${orderRes.packageName} — Ref ${orderRes.referenceNumber}`,
-        order_id: orderRes.orderId,
-        prefill: orderRes.prefill,
-        theme: { color: '#2563EB' },
-        modal: {
-          ondismiss: () => {
+      const rzp = new RazorpayCtor(
+        buildRazorpayCheckoutOptions({
+          order: orderRes,
+          onVerifiedSuccess: (verified) => {
+            onNavigate(
+              '/payment-success',
+              `?ref=${encodeURIComponent(verified.referenceNumber || orderRes.referenceNumber || '')}&order_id=${encodeURIComponent(verified.orderId || '')}`
+            );
+          },
+          onPendingOrAuthorized: (status, message) => {
+            setPendingOrderStatus(status);
+            setPaymentNotice(message);
+          },
+          onFailure: (reason) => {
+            onNavigate(
+              '/payment-failure',
+              `?ref=${encodeURIComponent(orderRes.referenceNumber || '')}&order_id=${encodeURIComponent(orderRes.orderId || '')}&reason=${encodeURIComponent(reason)}`
+            );
+          },
+          onDismiss: () => {
             setPendingOrderStatus('CANCELLED');
             setPaymentNotice(
               'Checkout window was closed before completion. You can check payment status anytime below before retrying.'
             );
           },
-        },
-        handler: async (rzpResponse: {
-          razorpay_order_id: string;
-          razorpay_payment_id: string;
-          razorpay_signature: string;
-        }) => {
-          try {
-            const verified = await verifyRazorpayPayment(rzpResponse);
-            if (verified.status === 'CAPTURED' && verified.verified) {
-              onNavigate(
-                '/payment-success',
-                `?ref=${encodeURIComponent(verified.referenceNumber || orderRes.referenceNumber || '')}&order_id=${encodeURIComponent(verified.orderId || '')}`
-              );
-            } else if (verified.status === 'PENDING' || verified.status === 'AUTHORIZED') {
-              setPendingOrderStatus(verified.status);
-              setPaymentNotice(
-                'Payment status is being verified. Please do not make another payment until the transaction status is checked.'
-              );
-            } else {
-              onNavigate(
-                '/payment-failure',
-                `?ref=${encodeURIComponent(orderRes.referenceNumber || '')}&order_id=${encodeURIComponent(orderRes.orderId || '')}&reason=${encodeURIComponent(verified.error || 'Payment could not be verified as captured.')}`
-              );
-            }
-          } catch {
-            // Network disconnected during verification callback
-            setPendingOrderStatus('PENDING');
-            setPaymentNotice(
-              'Payment status is being verified. Please do not make another payment until the transaction status is checked.'
-            );
-          }
-        },
-      });
+        })
+      );
 
       rzp.on('payment.failed', (failRes) => {
         const reason = failRes?.error?.description || 'Payment failed.';
